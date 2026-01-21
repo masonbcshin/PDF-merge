@@ -1,487 +1,211 @@
-'use client';
-
-import { useState, useCallback, useRef, useEffect } from 'react';
+import type { Metadata } from 'next';
 import {
-  Loader2,
+  Shield,
+  Zap,
+  FileStack,
+  MousePointerClick,
+  Lock,
   Download,
-  Settings,
-  AlertCircle,
-  CheckCircle,
-  Sparkles,
 } from 'lucide-react';
-import type { PDFFile, MergeStatus, MergeOptions, Template, WorkerResponse } from '@/types/pdf';
-import { getPDFPageCount, downloadBlob, arrayMove, mergePDFs } from '@/lib/pdfUtils';
-import { formatFileSize } from '@/lib/pdfUtils';
-import { getErrorMessage } from '@/lib/errorHandler';
-import { hasPremiumCredit, usePremiumCredit, getPremiumCredits } from '@/lib/shareTracking';
+import {
+  HeroSection,
+  FeatureSection,
+  BenefitSection,
+  FAQSection,
+  CTASection,
+} from '@/components/seo';
+import type { FAQItem, FeatureItem } from '@/components/seo';
 
-import PrivacyBadge from '@/components/PrivacyBadge';
-import FileUploader from '@/components/FileUploader';
-import PDFList from '@/components/PDFList';
-import ShareModal from '@/components/ShareModal';
-import TemplateSelector from '@/components/TemplateSelector';
+// SEO 메타데이터
+export const metadata: Metadata = {
+  title: 'PDF 합치기 무료 - 온라인 PDF 병합 도구 | PDF Merger Pro',
+  description:
+    '무료 온라인 PDF 합치기 서비스입니다. 여러 PDF 파일을 하나로 병합하세요. 설치 없이 브라우저에서 바로 사용 가능하며, 파일이 서버에 업로드되지 않아 100% 안전합니다.',
+  keywords: [
+    'PDF 합치기',
+    'PDF 병합',
+    'PDF 합치기 무료',
+    '온라인 PDF 병합',
+    'PDF 파일 합치기',
+    'PDF merger',
+    'PDF combiner',
+    '무료 PDF 도구',
+  ],
+  alternates: {
+    canonical: 'https://pdf-merger-pro.vercel.app',
+  },
+  openGraph: {
+    title: 'PDF 합치기 무료 - 온라인 PDF 병합 도구',
+    description:
+      '무료로 PDF 파일을 병합하세요. 브라우저에서 직접 처리되어 100% 안전합니다.',
+    url: 'https://pdf-merger-pro.vercel.app',
+  },
+};
 
-/**
- * Web Worker 동적 로딩 안내:
- * Next.js에서 Web Worker를 사용하려면 다음과 같이 동적으로 로드해야 합니다:
- * const worker = new Worker(new URL('./pdf-worker', import.meta.url));
- * 
- * Safari 호환성 참고:
- * - Safari 15+ 에서 ES Module Worker 지원
- * - 이전 버전에서는 fallback으로 메인 스레드에서 처리
- */
+// 기능 목록
+const features: FeatureItem[] = [
+  {
+    icon: Shield,
+    title: '100% 개인정보 보호',
+    description:
+      '모든 PDF 처리는 브라우저에서 이루어집니다. 파일이 서버로 전송되지 않아 완벽한 프라이버시가 보장됩니다.',
+  },
+  {
+    icon: Zap,
+    title: '빠른 처리 속도',
+    description:
+      '최신 웹 기술을 활용하여 대용량 PDF 파일도 빠르게 병합할 수 있습니다. 최대 50개 파일까지 한 번에 처리 가능합니다.',
+  },
+  {
+    icon: FileStack,
+    title: '다양한 옵션 지원',
+    description:
+      '북마크 자동 생성, 파일 크기 최적화 등 다양한 병합 옵션을 제공합니다. 원하는 페이지만 선택하여 병합할 수도 있습니다.',
+  },
+  {
+    icon: MousePointerClick,
+    title: '드래그 앤 드롭',
+    description:
+      '파일을 끌어다 놓기만 하면 됩니다. 직관적인 인터페이스로 순서 변경도 간편하게 할 수 있습니다.',
+  },
+  {
+    icon: Lock,
+    title: '설치 불필요',
+    description:
+      '별도의 소프트웨어 설치 없이 웹 브라우저만으로 PDF 합치기가 가능합니다. Windows, Mac, Linux 모두 지원합니다.',
+  },
+  {
+    icon: Download,
+    title: '무료 이용',
+    description:
+      '회원가입 없이 무료로 PDF 병합 서비스를 이용할 수 있습니다. 일일 사용 제한 없이 무제한으로 사용하세요.',
+  },
+];
 
-// 상수 정의
-const MAX_FILES = 50;
-const MAX_TOTAL_SIZE_FREE = 50 * 1024 * 1024; // 50MB (무료)
-const MAX_TOTAL_SIZE_PREMIUM = 200 * 1024 * 1024; // 200MB (프리미엄)
+// 혜택 목록
+const benefits = [
+  '여러 PDF 문서를 단 몇 초 만에 하나로 합칠 수 있습니다',
+  '파일 순서를 자유롭게 변경하여 원하는 순서로 병합 가능합니다',
+  '특정 페이지만 선택하여 필요한 부분만 추출하고 병합할 수 있습니다',
+  '병합된 PDF에 자동으로 북마크를 추가하여 탐색을 용이하게 합니다',
+  '파일 크기를 최적화하여 용량을 줄일 수 있습니다',
+];
 
-export default function Home() {
-  // 상태 관리
-  const [pdfFiles, setPdfFiles] = useState<PDFFile[]>([]);
-  const [mergeStatus, setMergeStatus] = useState<MergeStatus>('idle');
-  const [error, setError] = useState<string | null>(null);
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [mergeOptions, setMergeOptions] = useState<MergeOptions>({
-    createBookmarks: false,
-    optimizeSize: false,
-  });
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+// FAQ 데이터
+const faqItems: FAQItem[] = [
+  {
+    question: 'PDF 합치기는 무료인가요?',
+    answer:
+      '네, PDF Merger Pro는 완전 무료입니다. 회원가입 없이 바로 사용할 수 있으며, 일일 사용 제한도 없습니다. 프리미엄 기능을 이용하면 더 큰 파일도 처리할 수 있습니다.',
+  },
+  {
+    question: '업로드한 PDF 파일은 안전한가요?',
+    answer:
+      '100% 안전합니다. 모든 PDF 처리는 사용자의 브라우저에서 직접 이루어지며, 파일이 서버로 전송되지 않습니다. 브라우저를 닫으면 모든 데이터가 즉시 삭제됩니다.',
+  },
+  {
+    question: '한 번에 몇 개의 PDF를 병합할 수 있나요?',
+    answer:
+      '최대 50개의 PDF 파일을 한 번에 병합할 수 있습니다. 무료 버전에서는 총 50MB까지, 프리미엄 크레딧을 사용하면 200MB까지 처리 가능합니다.',
+  },
+  {
+    question: '모바일에서도 PDF 합치기가 가능한가요?',
+    answer:
+      '네, 모바일 브라우저에서도 완벽하게 작동합니다. 스마트폰이나 태블릿에서 PDF 파일을 선택하여 병합할 수 있습니다. 모바일 최적화 페이지도 제공됩니다.',
+  },
+  {
+    question: 'PDF 병합 순서를 변경할 수 있나요?',
+    answer:
+      '물론입니다. 파일 목록에서 드래그 앤 드롭으로 간편하게 순서를 변경할 수 있습니다. 원하는 순서대로 배치한 후 병합 버튼을 클릭하세요.',
+  },
+  {
+    question: '특정 페이지만 선택하여 병합할 수 있나요?',
+    answer:
+      '네, 각 PDF 파일에서 원하는 페이지만 선택하여 병합할 수 있습니다. 파일 목록에서 페이지 선택 옵션을 사용하여 필요한 페이지를 지정하세요.',
+  },
+];
 
-  // Worker 참조
-  const workerRef = useRef<Worker | null>(null);
-
-  // Worker 초기화
-  useEffect(() => {
-    // Worker 지원 여부 확인
-    if (typeof Worker !== 'undefined') {
-      try {
-        workerRef.current = new Worker(
-          new URL('./pdf-worker', import.meta.url)
-        );
-
-        workerRef.current.onmessage = (event: MessageEvent<WorkerResponse>) => {
-          const { type, progress: workerProgress, blobData, message } = event.data;
-
-          switch (type) {
-            case 'progress':
-              if (workerProgress !== undefined) {
-                setProgress(workerProgress);
-              }
-              break;
-            case 'result':
-              if (blobData) {
-                const blob = new Blob([blobData], { type: 'application/pdf' });
-                const filename = `merged_${new Date().toISOString().slice(0, 10)}.pdf`;
-                downloadBlob(blob, filename);
-                setMergeStatus('success');
-                setShowShareModal(true);
-              }
-              break;
-            case 'error':
-              setError(message || '병합 중 오류가 발생했습니다.');
-              setMergeStatus('error');
-              break;
-          }
-        };
-
-        workerRef.current.onerror = (e) => {
-          console.error('Worker error:', e);
-          setError('Worker 오류가 발생했습니다. 다시 시도해주세요.');
-          setMergeStatus('error');
-        };
-      } catch (e) {
-        console.warn('Worker 초기화 실패, fallback 모드 사용:', e);
-      }
-    }
-
-    return () => {
-      workerRef.current?.terminate();
-    };
-  }, []);
-
-  // 파일 추가 핸들러
-  const handleFilesAdded = useCallback(async (newFiles: File[]) => {
-    setError(null);
-
-    // 파일 개수 체크
-    if (pdfFiles.length + newFiles.length > MAX_FILES) {
-      setError(`최대 ${MAX_FILES}개의 파일만 추가할 수 있습니다.`);
-      return;
-    }
-
-    // 파일 처리
-    const processedFiles: PDFFile[] = [];
-
-    for (const file of newFiles) {
-      // PDF 타입 체크
-      if (file.type !== 'application/pdf') {
-        setError(`"${file.name}"은(는) PDF 파일이 아닙니다.`);
-        continue;
-      }
-
-      // 페이지 수 확인
-      const pageCount = await getPDFPageCount(file);
-      if (pageCount === null) {
-        setError(`"${file.name}" 파일을 읽을 수 없습니다. 파일이 손상되었거나 암호화되어 있을 수 있습니다.`);
-        continue;
-      }
-
-      processedFiles.push({
-        id: crypto.randomUUID(),
-        file,
-        name: file.name,
-        size: file.size,
-        pageCount,
-        selectedPages: undefined,
-      });
-    }
-
-    if (processedFiles.length > 0) {
-      setPdfFiles((prev) => [...prev, ...processedFiles]);
-    }
-  }, [pdfFiles.length]);
-
-  // 파일 삭제 핸들러
-  const handleRemove = useCallback((id: string) => {
-    setPdfFiles((prev) => prev.filter((f) => f.id !== id));
-  }, []);
-
-  // 파일 순서 변경 핸들러
-  const handleReorder = useCallback((oldIndex: number, newIndex: number) => {
-    setPdfFiles((prev) => arrayMove(prev, oldIndex, newIndex));
-  }, []);
-
-  // 선택 페이지 업데이트 핸들러
-  const handleUpdateSelectedPages = useCallback((id: string, pages: number[]) => {
-    setPdfFiles((prev) =>
-      prev.map((f) =>
-        f.id === id ? { ...f, selectedPages: pages.length > 0 ? pages : undefined } : f
-      )
-    );
-  }, []);
-
-  // 병합 핸들러
-  const handleMerge = useCallback(async () => {
-    // 최소 파일 수 체크
-    if (pdfFiles.length < 2) {
-      setError('최소 2개 이상의 PDF 파일이 필요합니다.');
-      return;
-    }
-
-    // 총 크기 계산
-    const totalSize = pdfFiles.reduce((acc, f) => acc + f.size, 0);
-    const isPremium = hasPremiumCredit();
-    const maxSize = isPremium ? MAX_TOTAL_SIZE_PREMIUM : MAX_TOTAL_SIZE_FREE;
-
-    // 크기 초과 체크
-    if (totalSize > maxSize) {
-      if (!isPremium) {
-        const useCredits = window.confirm(
-          `파일 총 크기가 무료 제한(${formatFileSize(MAX_TOTAL_SIZE_FREE)})을 초과합니다.\n` +
-          `현재 프리미엄 크레딧: ${getPremiumCredits()}개\n\n` +
-          `프리미엄 크레딧을 사용하시겠습니까?`
-        );
-
-        if (useCredits) {
-          const success = usePremiumCredit();
-          if (!success) {
-            setError('프리미엄 크레딧이 부족합니다. 공유하여 크레딧을 얻으세요!');
-            setShowShareModal(true);
-            return;
-          }
-        } else {
-          setError(`파일 총 크기가 ${formatFileSize(MAX_TOTAL_SIZE_FREE)}을 초과합니다.`);
-          return;
-        }
-      } else if (totalSize > MAX_TOTAL_SIZE_PREMIUM) {
-        setError(`파일 총 크기가 최대 ${formatFileSize(MAX_TOTAL_SIZE_PREMIUM)}을 초과합니다.`);
-        return;
-      }
-    }
-
-    setError(null);
-    setMergeStatus('processing');
-    setProgress(0);
-
-    // Worker 사용 가능 여부 확인
-    if (workerRef.current) {
-      try {
-        // 파일을 ArrayBuffer로 변환하여 Worker에 전송
-        const filesData = await Promise.all(
-          pdfFiles.map(async (pdfFile) => ({
-            id: pdfFile.id,
-            name: pdfFile.name,
-            size: pdfFile.size,
-            pageCount: pdfFile.pageCount,
-            selectedPages: pdfFile.selectedPages,
-            arrayBuffer: await pdfFile.file.arrayBuffer(),
-          }))
-        );
-
-        // Transferable로 ArrayBuffer 전송
-        const buffers = filesData.map((f) => f.arrayBuffer);
-
-        workerRef.current.postMessage(
-          {
-            type: 'merge',
-            files: filesData,
-            options: mergeOptions,
-          },
-          buffers
-        );
-      } catch (err) {
-        setError(getErrorMessage(err));
-        setMergeStatus('error');
-      }
-    } else {
-      // Worker가 없으면 메인 스레드에서 직접 처리 (fallback)
-      try {
-        const blob = await mergePDFs(pdfFiles, mergeOptions, (pct) => {
-          setProgress(pct);
-        });
-        
-        const filename = `merged_${new Date().toISOString().slice(0, 10)}.pdf`;
-        downloadBlob(blob, filename);
-        setMergeStatus('success');
-        setShowShareModal(true);
-      } catch (err) {
-        setError(getErrorMessage(err));
-        setMergeStatus('error');
-      }
-    }
-  }, [pdfFiles, mergeOptions]);
-
-  // 템플릿 선택 핸들러
-  const handleSelectTemplate = useCallback((template: Template) => {
-    setSelectedTemplate(template);
-    // 템플릿 선택 시 안내 메시지 표시
-    setError(null);
-  }, []);
-
-  // 상태 초기화
-  const handleReset = useCallback(() => {
-    setPdfFiles([]);
-    setMergeStatus('idle');
-    setError(null);
-    setProgress(0);
-    setSelectedTemplate(null);
-  }, []);
-
-  // 총 파일 크기 계산
-  const totalSize = pdfFiles.reduce((acc, f) => acc + f.size, 0);
-  const totalPages = pdfFiles.reduce((acc, f) => {
-    if (f.selectedPages && f.selectedPages.length > 0) {
-      return acc + f.selectedPages.length;
-    }
-    return acc + f.pageCount;
-  }, 0);
-
+export default function HomePage() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
-      {/* 헤더 */}
-      <header className="py-8 md:py-12">
-        <div className="max-w-4xl mx-auto px-4">
-          <div className="text-center">
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-              PDF Merger Pro
-            </h1>
-            <p className="mt-3 text-lg text-gray-600">
-              여러 PDF 파일을 하나로 병합하세요
-            </p>
-            <div className="mt-4 flex justify-center">
-              <PrivacyBadge />
-            </div>
-          </div>
-        </div>
-      </header>
+    <>
+      {/* 히어로 섹션 - H1 포함 */}
+      <HeroSection
+        badge="무료 온라인 도구"
+        title="PDF 합치기 - 여러 파일을 하나로 병합"
+        subtitle="설치 없이 브라우저에서 바로 PDF 파일을 합치세요. 모든 처리는 로컬에서 이루어져 파일이 외부로 전송되지 않습니다."
+        ctaText="PDF 병합 시작하기"
+        ctaHref="/tool"
+        secondaryCtaText="기능 살펴보기"
+        secondaryCtaHref="#features"
+      />
 
-      {/* 메인 콘텐츠 */}
-      <div className="max-w-4xl mx-auto px-4 pb-12">
-        <div className="space-y-6">
-          {/* 템플릿 선택 */}
-          <TemplateSelector onSelectTemplate={handleSelectTemplate} />
-
-          {/* 선택된 템플릿 안내 */}
-          {selectedTemplate && (
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
-              <div className="flex items-start gap-3">
-                <Sparkles className="w-5 h-5 text-blue-500 mt-0.5" />
-                <div>
-                  <p className="font-medium text-blue-800">
-                    {selectedTemplate.name} 템플릿 선택됨
-                  </p>
-                  <p className="text-sm text-blue-600 mt-1">
-                    {selectedTemplate.files.map((f) => f.placeholder).join(' → ')}
-                    순서로 파일을 추가해주세요.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 파일 업로더 */}
-          <FileUploader
-            onFilesAdded={handleFilesAdded}
-            disabled={mergeStatus === 'processing'}
-          />
-
-          {/* 에러 메시지 */}
-          {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-xl animate-fade-in">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-medium text-red-800">오류 발생</p>
-                  <p className="text-sm text-red-700 mt-1">{error}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 성공 메시지 */}
-          {mergeStatus === 'success' && !error && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-xl animate-fade-in">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-medium text-green-800">병합 완료!</p>
-                  <p className="text-sm text-green-700 mt-1">
-                    PDF 파일이 성공적으로 병합되어 다운로드되었습니다.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 파일 목록 */}
-          <PDFList
-            files={pdfFiles}
-            onRemove={handleRemove}
-            onReorder={handleReorder}
-            onUpdateSelectedPages={handleUpdateSelectedPages}
-          />
-
-          {/* 파일이 있을 때만 옵션과 버튼 표시 */}
-          {pdfFiles.length > 0 && (
-            <>
-              {/* 파일 요약 */}
-              <div className="p-4 bg-gray-50 rounded-xl">
-                <div className="flex flex-wrap gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-500">파일 수:</span>{' '}
-                    <span className="font-medium text-gray-900">
-                      {pdfFiles.length}개
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">총 페이지:</span>{' '}
-                    <span className="font-medium text-gray-900">
-                      {totalPages}페이지
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">총 크기:</span>{' '}
-                    <span className="font-medium text-gray-900">
-                      {formatFileSize(totalSize)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 병합 옵션 */}
-              <div className="p-4 bg-white border border-gray-200 rounded-xl">
-                <div className="flex items-center gap-2 mb-4">
-                  <Settings className="w-5 h-5 text-gray-500" />
-                  <span className="font-medium text-gray-900">병합 옵션</span>
-                </div>
-                <div className="space-y-3">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={mergeOptions.createBookmarks}
-                      onChange={(e) =>
-                        setMergeOptions((prev) => ({
-                          ...prev,
-                          createBookmarks: e.target.checked,
-                        }))
-                      }
-                      className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
-                    />
-                    <div>
-                      <span className="text-gray-700">북마크 자동 생성</span>
-                      <p className="text-xs text-gray-500">
-                        각 원본 파일을 북마크로 표시합니다
-                      </p>
-                    </div>
-                  </label>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={mergeOptions.optimizeSize}
-                      onChange={(e) =>
-                        setMergeOptions((prev) => ({
-                          ...prev,
-                          optimizeSize: e.target.checked,
-                        }))
-                      }
-                      className="w-4 h-4 text-blue-500 rounded focus:ring-blue-500"
-                    />
-                    <div>
-                      <span className="text-gray-700">파일 크기 최적화</span>
-                      <p className="text-xs text-gray-500">
-                        메타데이터를 제거하여 파일 크기를 줄입니다
-                      </p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {/* 액션 버튼 */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={handleMerge}
-                  disabled={pdfFiles.length < 2 || mergeStatus === 'processing'}
-                  className="flex-1 flex items-center justify-center gap-2 py-4 px-6 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors"
-                >
-                  {mergeStatus === 'processing' ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>병합 중... {progress}%</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-5 h-5" />
-                      <span>PDF 병합 및 다운로드</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleReset}
-                  disabled={mergeStatus === 'processing'}
-                  className="py-4 px-6 bg-gray-100 hover:bg-gray-200 disabled:bg-gray-100 disabled:cursor-not-allowed text-gray-700 font-medium rounded-xl transition-colors"
-                >
-                  초기화
-                </button>
-              </div>
-
-              {/* 진행률 바 */}
-              {mergeStatus === 'processing' && (
-                <div className="overflow-hidden rounded-full bg-gray-200">
-                  <div
-                    className="h-2 bg-blue-500 transition-all duration-300"
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </div>
+      {/* 기능 섹션 - H2 포함 */}
+      <div id="features">
+        <FeatureSection
+          title="왜 PDF Merger Pro를 선택해야 할까요?"
+          subtitle="빠르고 안전한 PDF 병합 서비스를 무료로 경험하세요"
+          features={features}
+        />
       </div>
 
-      {/* 공유 모달 */}
-      <ShareModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} />
-    </div>
+      {/* 혜택 섹션 - H2 포함 */}
+      <BenefitSection
+        title="PDF 합치기로 업무 효율성을 높이세요"
+        benefits={benefits}
+      />
+
+      {/* 사용 방법 섹션 - H2 포함 */}
+      <section className="py-12 md:py-16 bg-gray-50">
+        <div className="max-w-4xl mx-auto px-4">
+          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 text-center mb-10">
+            PDF 합치기 3단계 사용법
+          </h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              {
+                step: '1',
+                title: 'PDF 파일 선택',
+                desc: '합칠 PDF 파일을 드래그하거나 클릭하여 선택하세요.',
+              },
+              {
+                step: '2',
+                title: '순서 조정',
+                desc: '드래그 앤 드롭으로 원하는 순서대로 파일을 배치하세요.',
+              },
+              {
+                step: '3',
+                title: '병합 & 다운로드',
+                desc: '병합 버튼을 클릭하고 완성된 PDF를 다운로드하세요.',
+              },
+            ].map((item) => (
+              <div key={item.step} className="text-center">
+                <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center text-xl font-bold mx-auto mb-4">
+                  {item.step}
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  {item.title}
+                </h3>
+                <p className="text-gray-600">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ 섹션 - H2 포함 */}
+      <FAQSection
+        title="PDF 합치기 자주 묻는 질문"
+        items={faqItems}
+      />
+
+      {/* CTA 섹션 */}
+      <CTASection
+        title="지금 바로 PDF 파일을 병합하세요"
+        description="회원가입 없이 무료로 시작할 수 있습니다. 안전하고 빠른 PDF 병합을 경험해보세요."
+        ctaText="PDF 합치기 시작"
+        ctaHref="/tool"
+      />
+    </>
   );
 }

@@ -13,7 +13,7 @@
 import { PDFDocument } from 'pdf-lib';
 
 // Worker 컨텍스트 타입 선언
-declare const self: DedicatedWorkerGlobalScope;
+declare const self: Worker & typeof globalThis;
 
 // ============================================================================
 // 설정 상수

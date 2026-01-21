@@ -96,7 +96,7 @@ export async function mergePDFs(
     }
     
     const pdfBytes = await mergedPdf.save();
-    return new Blob([pdfBytes], { type: 'application/pdf' });
+    return new Blob([pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
   } catch (error) {
     console.error('PDF 병합 실패:', error);
     throw error;

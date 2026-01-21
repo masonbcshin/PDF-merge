@@ -63,7 +63,7 @@ export function addPremiumCredit(): void {
  * 프리미엄 크레딧을 1개 사용합니다.
  * @returns 사용 성공 여부
  */
-export function usePremiumCredit(): boolean {
+export function consumePremiumCredit(): boolean {
   if (typeof window === 'undefined') {
     return false;
   }
