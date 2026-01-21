@@ -24,7 +24,7 @@ import TemplateSelector from '@/components/TemplateSelector';
 /**
  * Web Worker 동적 로딩 안내:
  * Next.js에서 Web Worker를 사용하려면 다음과 같이 동적으로 로드해야 합니다:
- * const worker = new Worker(new URL('./pdf-worker', import.meta.url));
+ * const worker = new Worker(new URL('../pdf-worker', import.meta.url));
  * 
  * Safari 호환성 참고:
  * - Safari 15+ 에서 ES Module Worker 지원
@@ -58,7 +58,7 @@ export default function Home() {
     if (typeof Worker !== 'undefined') {
       try {
         workerRef.current = new Worker(
-          new URL('./pdf-worker', import.meta.url)
+          new URL('../pdf-worker', import.meta.url)
         );
 
         workerRef.current.onmessage = (event: MessageEvent<WorkerResponse>) => {

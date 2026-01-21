@@ -63,3 +63,13 @@ export interface PDFWorkerInput {
 export type PDFWorkerOutput = 
   | { success: true; data: Uint8Array }
   | { success: false; error: string };
+
+/**
+ * Worker 응답 메시지 타입
+ */
+export interface WorkerResponse {
+  type: 'progress' | 'result' | 'error';
+  progress?: number;
+  blobData?: ArrayBuffer;
+  message?: string;
+}
